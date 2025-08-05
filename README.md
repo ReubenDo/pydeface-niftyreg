@@ -1,6 +1,6 @@
-[![DOI](https://zenodo.org/badge/47563497.svg)](https://zenodo.org/badge/latestdoi/47563497)
 
-# PyDeface
+
+# PyDeface-Niftyreg
 A tool to remove facial structure from MRI images.
 
 ## Dependencies:
