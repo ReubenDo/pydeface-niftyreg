@@ -31,7 +31,7 @@ def test_get_outfile_type():
 
 
 def test_deface_image():
-    if which('fsl'):
+    if which('reg_aladin'):
         # Piece together test data path
         test_img_name = 'ds000031_sub-01_ses-006_run-001_T1w'
         pydeface_path = Path(__file__).parent.parent
@@ -50,3 +50,5 @@ def test_deface_image():
 
     else:
         pytest.skip("No FSL to run defacing.")
+
+test_deface_image()

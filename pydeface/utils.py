@@ -6,8 +6,9 @@ import sys
 from pkg_resources import resource_filename, Requirement
 import tempfile
 import numpy as np
-from nipype.interfaces import fsl
+from nipype.interfaces import niftyreg
 from nibabel import load, Nifti1Image
+from shutil import copyfile
 
 
 def initial_checks(template=None, facemask=None):
@@ -24,19 +25,22 @@ def initial_checks(template=None, facemask=None):
     if not os.path.exists(facemask):
         raise Exception('Missing face mask: %s' % facemask)
 
-    if 'FSLDIR' not in os.environ:
-        raise Exception("FSL must be installed and "
-                        "FSLDIR environment variable must be defined.")
         sys.exit(2)
     return template, facemask
 
 
-def output_checks(infile, outfile=None, force=False):
+def output_checks(infile, outfile=None, outfolder=None, force=False):
     """Determine output file name."""
     if force is None:
         force = False
+        
     if outfile is None:
-        outfile = infile.replace('.nii', '_defaced.nii')
+        if not outfolder is None:
+            outfile = os.path.join(outfolder,  os.path.basename(infile))
+        else:
+            outfile = infile.replace('.nii', '_defaced.nii')
+            
+        print(outfile)
 
     if os.path.exists(outfile) and force:
         print('Previous output will be overwritten.')
@@ -49,13 +53,14 @@ def output_checks(infile, outfile=None, force=False):
 
 
 def generate_tmpfiles(verbose=True):
+    _, tmp_infile = tempfile.mkstemp(suffix='.nii.gz')
     _, template_reg_mat = tempfile.mkstemp(suffix='.mat')
     _, warped_mask = tempfile.mkstemp(suffix='.nii.gz')
     if verbose:
-        print("Temporary files:\n  %s\n  %s" % (template_reg_mat, warped_mask))
+        print("Temporary files:\n  %s\n  %s\n  %s" % (tmp_infile, template_reg_mat, warped_mask))
     _, template_reg = tempfile.mkstemp(suffix='.nii.gz')
     _, warped_mask_mat = tempfile.mkstemp(suffix='.mat')
-    return template_reg, template_reg_mat, warped_mask, warped_mask_mat
+    return tmp_infile, template_reg, template_reg_mat, warped_mask, warped_mask_mat
 
 
 def cleanup_files(*args):
@@ -75,59 +80,63 @@ def get_outfile_type(outpath):
         raise ValueError('outfile path should be have .nii or .nii.gz suffix')
 
 
-def deface_image(infile=None, outfile=None, facemask=None,
-                 template=None, cost='mutualinfo', force=False,
+def deface_image(infile=None, outfile=None, outfolder=None, facemask=None,
+                 template=None, force=False,
                  forcecleanup=False, verbose=True, **kwargs):
     if not infile:
         raise ValueError("infile must be specified")
-    if shutil.which('fsl') is None:
-        raise EnvironmentError("fsl cannot be found on the path")
+    if shutil.which('reg_aladin') is None:
+        raise EnvironmentError("reg_aladin cannot be found on the path")
+    else:
+        print("Niftyreg has been found")
 
     template, facemask = initial_checks(template, facemask)
-    outfile = output_checks(infile, outfile, force)
-    template_reg, template_reg_mat, warped_mask, warped_mask_mat = generate_tmpfiles()
+    outfile = output_checks(infile, outfile, outfolder, force)
+    tmp_infile, template_reg, template_reg_mat, warped_mask, warped_mask_mat = generate_tmpfiles()
+    
+    copyfile(infile, tmp_infile)
 
     print('Defacing...\n  %s' % infile)
     # register template to infile
-    outfile_type = get_outfile_type(template_reg)
-    flirt = fsl.FLIRT()
-    flirt.inputs.cost_func = cost
-    flirt.inputs.in_file = template
-    flirt.inputs.out_matrix_file = template_reg_mat
-    flirt.inputs.out_file = template_reg
-    flirt.inputs.output_type = outfile_type
-    flirt.inputs.reference = infile
-    flirt.run()
+    node = niftyreg.RegAladin()
+    node.inputs.ref_file = tmp_infile
+    node.inputs.flo_file = template
+    node.inputs.aff_file = template_reg_mat
+    node.inputs.res_file = warped_mask
+    if not verbose:
+        node.inputs.verbosity_off_flag = True
+    node.run()
 
-    outfile_type = get_outfile_type(warped_mask)
+
     # warp facemask to infile
-    flirt = fsl.FLIRT()
-    flirt.inputs.in_file = facemask
-    flirt.inputs.in_matrix_file = template_reg_mat
-    flirt.inputs.apply_xfm = True
-    flirt.inputs.reference = infile
-    flirt.inputs.out_file = warped_mask
-    flirt.inputs.output_type = outfile_type
-    flirt.inputs.out_matrix_file = warped_mask_mat
-    flirt.run()
+    node = niftyreg.RegResample()
+    node.inputs.ref_file = tmp_infile
+    node.inputs.flo_file = facemask
+    node.inputs.trans_file = template_reg_mat
+    node.inputs.out_file = warped_mask
+    node.inputs.inter_val = 'NN'
+    if not verbose:
+        node.inputs.verbosity_off_flag = True
+    node.run()
+
 
     # multiply mask by infile and save
-    infile_img = load(infile)
-    infile_data = np.asarray(infile_img.dataobj)
+    infile_img = load(tmp_infile)
     warped_mask_img = load(warped_mask)
-    warped_mask_data = np.asarray(warped_mask_img.dataobj)
     try:
-        outdata = infile_data.squeeze() * warped_mask_data
+        outdata = infile_img.get_fdata().squeeze() * warped_mask_img.get_fdata()
     except ValueError:
-        tmpdata = np.stack(warped_mask_data * infile_img.shape[-1], axis=-1)
-        outdata = infile_data * tmpdata
+        tmpdata = np.stack([warped_mask_img.get_fdata()] *
+                           infile_img.get_fdata().shape[-1], axis=-1)
+        outdata = infile_img.get_fdata() * tmpdata
 
-    masked_brain = Nifti1Image(outdata, infile_img.affine, infile_img.header)
+    masked_brain = Nifti1Image(outdata, infile_img.affine,
+                               infile_img.header)
     masked_brain.to_filename(outfile)
     print("Defaced image saved as:\n  %s" % outfile)
 
     if forcecleanup:
-        cleanup_files(warped_mask, template_reg, template_reg_mat)
+        cleanup_files(tmp_infile, warped_mask, template_reg, template_reg_mat)
         return warped_mask_img
     else:
-        return warped_mask_img, warped_mask, template_reg, template_reg_mat
+        return tmp_infile, warped_mask, template_reg, template_reg_mat
