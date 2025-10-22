@@ -3,6 +3,21 @@
 # PyDeface-Niftyreg
 A tool to remove facial structure from MRI images.
 
+If you find this code useful for your research, please cite the following paper:
+
+```
+@article{juvekar2024remind,
+  title={{ReMIND: The Brain Resection Multimodal Imaging Database},
+  author={Juvekar, Parikshit and Dorent, Reuben and K{\"o}gl, Fryderyk and Torio, Erickson and Barr, Colton and Rigolo, Laura and Galvin, Colin and Jowkar, Nick and Kazi, Anees and Haouchine, Nazim and others},
+  journal={Scientific Data},
+  volume={11},
+  number={1},
+  pages={494},
+  year={2024},
+  publisher={Nature Publishing Group UK London}
+}
+```
+
 ## Dependencies:
 - Niftyreg
 
